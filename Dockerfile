@@ -1,4 +1,4 @@
-FROM python:3
+FROM python:3.12-slim
 
 RUN pip3 --no-cache-dir install --upgrade \
     pip \
