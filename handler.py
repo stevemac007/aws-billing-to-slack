@@ -313,7 +313,8 @@ def publish_google(hook_url: str, summary: str, buffer: str) -> None:
         resp.raise_for_status()
     except requests.RequestException as e:
         print(f"Google Chat webhook error: {e}")
-
+        # Avoid logging the full URL to prevent webhook URL exposure
+        print(f"Google Chat webhook error: {type(e).__name__}: {str(e)}")
 if __name__ == "__main__":
     """Test the cost reporting functionality with real AWS data."""
     print("=== Testing with real AWS Cost Explorer API ===")

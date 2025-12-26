@@ -96,6 +96,7 @@ Resources:
         Variables:
           GROUP_TYPE: DIMENSION
           GROUP_BY: !Ref GroupBy
+          LENGTH: !Ref GroupLength
           SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
           TEAMS_WEBHOOK_URL: !Ref TeamsWebhookUrl
           GOOGLE_WEBHOOK_URL: !Ref GoogleWebhookUrl

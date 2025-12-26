@@ -83,7 +83,7 @@ help:
 	@echo "  sam-deploy            - Deploy with SAM (uses default profile)"
 	@echo "  sam-deploy-guided     - Deploy with guided setup"
 	@echo "  sam-deploy-with-slack - Deploy with Slack webhook (set SLACK_URL)"
-	@echo "  sam-deploy-with-params- Deploy with multiple parameters"
+	@echo "  sam-deploy-with-params - Deploy with multiple parameters"
 	@echo ""
 	@echo "SAM Profile Deployments:"
 	@echo "  sam-deploy-account    - Deploy account profile (LINKED_ACCOUNT grouping, 20 items)"
