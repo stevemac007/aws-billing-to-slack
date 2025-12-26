@@ -17,8 +17,7 @@ def sparkline(datapoints: List[float]) -> str:
     """Generate a sparkline visualization from a list of datapoints."""
     if not datapoints:
         return ""
-    
-    lower = min(datapoints)
+
     upper = max(datapoints)
     n_sparks = len(SPARKS) - 1
 
@@ -68,10 +67,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     teams_hook_url = os.environ.get('TEAMS_WEBHOOK_URL')
     if teams_hook_url:
         publish_teams(teams_hook_url, summary, buffer)
-    
+
     google_hook_url = os.environ.get('GOOGLE_WEBHOOK_URL')
     if google_hook_url:
         publish_google(google_hook_url, summary, buffer)
+
 
 def report_cost(
     group_by: str = "SERVICE",
@@ -202,7 +202,8 @@ def report_cost(
 
     for service_name, costs in most_expensive_yesterday[:length]:
         weekcost = cost_per_week_by_service[service_name]
-        buffer += f"{service_name:{longest_name_len}} ${costs[-1]:8,.2f} {delta(costs):4.0f}% ${weekcost:12,.2f} {sparkline(costs):7}\n"
+        buffer += (f"{service_name:{longest_name_len}} ${costs[-1]:8,.2f} {delta(costs):4.0f}% "
+                   f"${weekcost:12,.2f} {sparkline(costs):7}\n")
 
     other_costs = [0.0] * n_days
     other_weekly_costs = 0.0
@@ -212,7 +213,8 @@ def report_cost(
                 other_costs[i] += cost
             other_weekly_costs += cost
 
-    buffer += f"{'Other':{longest_name_len}} ${other_costs[-1]:8,.2f} {delta(other_costs):4.0f}% ${other_weekly_costs:12,.2f} {sparkline(other_costs):7} \n"
+    buffer += (f"{'Other':{longest_name_len}} ${other_costs[-1]:8,.2f} {delta(other_costs):4.0f}% "
+               f"${other_weekly_costs:12,.2f} {sparkline(other_costs):7} \n")
 
     total_costs = [0.0] * n_days
     for day_number in range(n_days):
@@ -222,7 +224,8 @@ def report_cost(
 
     total_weekly = sum(cost_per_week_by_service.values())
 
-    buffer += f"{'Total':{longest_name_len}} ${total_costs[-1]:8,.2f} {delta(total_costs):4.0f}% ${total_weekly:12,.2f} {sparkline(total_costs):7} \n"
+    buffer += (f"{'Total':{longest_name_len}} ${total_costs[-1]:8,.2f} {delta(total_costs):4.0f}% "
+               f"${total_weekly:12,.2f} {sparkline(total_costs):7} \n")
 
     cost_per_day_by_service["total"] = total_costs[-1]
 
@@ -253,7 +256,7 @@ def report_cost(
         elif relative_to_budget > 110:
             emoji = ":rotating_light:"
         else:
-            emoji = ":warning:" 
+            emoji = ":warning:"
 
         summary = (
             f"{emoji} {cost_aggregation} for {account_name} on {yesterday_date} (UTC) was ${total_costs[-1]:,.2f}\n"
@@ -272,7 +275,7 @@ def report_cost(
 def publish_slack(hook_url: str, summary: str, buffer: str) -> None:
     """Publish cost report to Slack webhook."""
     try:
-        resp = requests.post(   
+        resp = requests.post(
             hook_url,
             json={
                 "text": f"{summary}\n\n```\n{buffer}\n```",
