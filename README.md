@@ -4,6 +4,12 @@
 
 Sends daily breakdowns of AWS costs to a Slack channel.
 
+## Requirements
+
+- Python 3.12+ (uses modern Python features and type hints)
+- AWS CLI configured with appropriate permissions
+- Node.js (for Serverless Framework)
+
 # Install
 
 1. Install [`serverless`](https://serverless.com/), which I use to configure the AWS Lambda function that runs daily.
