@@ -1,56 +1,65 @@
+from __future__ import annotations
+
 from collections import defaultdict
-import boto3
-import datetime
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 import os
+
+import boto3
 import requests
-import sys
 
 # It seems that the sparkline symbols don't line up (probably based on font?) so put them last
 # Also, leaving out the full block because Slack doesn't like it: '█'
-sparks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
+SPARKS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
 
-def sparkline(datapoints):
+
+def sparkline(datapoints: List[float]) -> str:
+    """Generate a sparkline visualization from a list of datapoints."""
+    if not datapoints:
+        return ""
+    
     lower = min(datapoints)
     upper = max(datapoints)
-    n_sparks = len(sparks) - 1
+    n_sparks = len(SPARKS) - 1
 
     line = ""
     for dp in datapoints:
-        scaled = 1 if upper == 0 else dp/upper
+        scaled = 1 if upper == 0 else dp / upper
         which_spark = round(scaled * n_sparks)
-        if which_spark < 0:
-            which_spark = 0
-        if which_spark >= len(sparks):
-            which_spark = 0
-        line += (sparks[which_spark])
+        which_spark = max(0, min(which_spark, len(SPARKS) - 1))
+        line += SPARKS[which_spark]
 
     return line
 
 
-def delta(costs):
-    if (len(costs) > 1 and costs[-1] >= 1 and costs[-2] >= 1):
+def delta(costs: List[float]) -> float:
+    """Calculate percentage change between the last two values."""
+    if len(costs) > 1 and costs[-1] >= 1 and costs[-2] >= 1:
         # This only handles positive numbers
-        result = ((costs[-1]/costs[-2])-1)*100.0
-    else:
-        result = 0
-    return result
+        return ((costs[-1] / costs[-2]) - 1) * 100.0
+    return 0.0
 
 
-def find_by_key(values: list, key: str, value: str):
-    for item in values:
-        if item.get(key) == value:
-            return item
-    return None
+def find_by_key(values: List[Dict[str, Any]], key: str, value: str) -> Optional[Dict[str, Any]]:
+    """Find an item in a list of dictionaries by key-value pair."""
+    return next((item for item in values if item.get(key) == value), None)
 
 
-def lambda_handler(event, context):
+def lambda_handler(event: Dict[str, Any], context: Any) -> None:
+    """AWS Lambda handler function."""
     group_type = os.environ.get("GROUP_TYPE", "DIMENSION")
     group_by = os.environ.get("GROUP_BY", "SERVICE")
     length = int(os.environ.get("LENGTH", "5"))
     cost_aggregation = os.environ.get("COST_AGGREGATION", "UnblendedCost")
     n_days = int(os.environ.get("DAYS", "7"))
 
-    summary, buffer, data = report_cost(group_type=group_type, group_by=group_by, length=length, cost_aggregation=cost_aggregation, n_days=n_days)
+    summary, buffer, data = report_cost(
+        group_type=group_type,
+        group_by=group_by,
+        length=length,
+        cost_aggregation=cost_aggregation,
+        n_days=n_days
+    )
 
     slack_hook_url = os.environ.get('SLACK_WEBHOOK_URL')
     if slack_hook_url:
@@ -64,25 +73,36 @@ def lambda_handler(event, context):
     if google_hook_url:
         publish_google(google_hook_url, summary, buffer)
 
-def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: str = "UnblendedCost", result: dict = None, yesterday_str: str = None, n_days: int = 7, group_type="DIMENSION"):
-
-    today = datetime.datetime.today()
-    start_period_date = today - datetime.timedelta(days=n_days)
+def report_cost(
+    group_by: str = "SERVICE",
+    length: int = 5,
+    cost_aggregation: str = "UnblendedCost",
+    result: Optional[Dict[str, Any]] = None,
+    yesterday_str: Optional[str] = None,
+    n_days: int = 7,
+    group_type: str = "DIMENSION"
+) -> Tuple[str, str, Dict[str, float]]:
+    """Generate cost report from AWS Cost Explorer data."""
+    
+    today = datetime.today()
+    start_period_date = today - timedelta(days=n_days)
+    
     # Generate list of dates, so that even if our data is sparse,
     # we have the correct length lists of costs (len is n_days)
     list_of_dates = [
-        (start_period_date + datetime.timedelta(days=x)).strftime('%Y-%m-%d')
+        (start_period_date + timedelta(days=x)).strftime('%Y-%m-%d')
         for x in range(n_days)
     ]
 
-    # Get account account name from env, or account id/account alias from boto3
-    account_name = os.environ.get("AWS_ACCOUNT_NAME", None)
+    # Get account name from env, or account id/account alias from boto3
+    account_name = os.environ.get("AWS_ACCOUNT_NAME")
     if account_name is None:
         iam = boto3.client("iam")
         paginator = iam.get_paginator("list_account_aliases")
         for aliases in paginator.paginate(PaginationConfig={"MaxItems": 1}):
             if "AccountAliases" in aliases and len(aliases["AccountAliases"]) > 0:
                 account_name = aliases["AccountAliases"][0]
+                break
 
     if account_name is None:
         account_name = boto3.client("sts").get_caller_identity().get("Account")
@@ -121,41 +141,62 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
     }
 
     # Only run the query when on lambda, not when testing locally with example json
+    api_response_time = None
     if result is None:
         result = client.get_cost_and_usage(**query)
+        # Extract API response timestamp if available
+        if 'ResponseMetadata' in result and 'HTTPHeaders' in result['ResponseMetadata']:
+            api_response_time = result['ResponseMetadata']['HTTPHeaders'].get('date')
 
-    cost_per_day_by_service = defaultdict(list)
-    cost_per_week_by_service = defaultdict(list)
+    cost_per_day_by_service: Dict[str, List[float]] = defaultdict(list)
+    cost_per_week_by_service: Dict[str, float] = defaultdict(float)
 
     # New method, which first creates a dict of dicts
     # then loop over the services and loop over the list_of_dates
     # and this means even for sparse data we get a full list of costs
-    cost_per_day_dict = defaultdict(dict)
+    cost_per_day_dict: Dict[str, Dict[str, float]] = defaultdict(dict)
 
+    # Extract actual dates from the result data for more accurate reporting
+    actual_dates = []
     for day in result['ResultsByTime']:
         start_date = day["TimePeriod"]["Start"]
+        actual_dates.append(start_date)
         for group in day['Groups']:
             key = group['Keys'][0]
             if group_by == "LINKED_ACCOUNT":
                 dimension = find_by_key(result["DimensionValueAttributes"], "Value", key)
                 if dimension:
-                    key += " ("+dimension["Attributes"]["description"]+")"
+                    key += f" ({dimension['Attributes']['description']})"
             cost = float(group['Metrics'][cost_aggregation]['Amount'])
             cost_per_day_dict[key][start_date] = cost
-            if key not in cost_per_week_by_service:
-                cost_per_week_by_service[key] = 0
             cost_per_week_by_service[key] += cost
 
-    for key in cost_per_day_dict.keys():
+    # Use actual dates from data if available, otherwise fall back to generated dates
+    if actual_dates:
+        list_of_dates = actual_dates
+        # The "yesterday" date is the last date in our actual data
+        yesterday_date = actual_dates[-1]
+        # Update the date range for the summary
+        start_period_date = datetime.strptime(actual_dates[0], '%Y-%m-%d')
+        end_period_date = datetime.strptime(actual_dates[-1], '%Y-%m-%d') + timedelta(days=1)
+    else:
+        # Fallback to calculated yesterday date
+        yesterday_date = (today - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    for key in cost_per_day_dict:
         for start_date in list_of_dates:
             cost = cost_per_day_dict[key].get(start_date, 0.0)  # fallback for sparse data
             cost_per_day_by_service[key].append(cost)
 
     # Sort the map by yesterday's cost
-    most_expensive_yesterday = sorted(cost_per_day_by_service.items(), key=lambda i: i[1][-1], reverse=True)
+    most_expensive_yesterday = sorted(
+        cost_per_day_by_service.items(), 
+        key=lambda item: item[1][-1], 
+        reverse=True
+    )
 
-    service_names = [k for k,_ in most_expensive_yesterday[:length]]
-    longest_name_len = len(max(service_names, key = len))
+    service_names = [k for k, _ in most_expensive_yesterday[:length]]
+    longest_name_len = len(max(service_names, key=len)) if service_names else 0
 
     buffer = f"{'Service':{longest_name_len}} ${'Yday':8} {'∆%':>5} $Last {n_days}{'d':6} {'Last '}{n_days}{'d':7} \n"
 
@@ -164,10 +205,11 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
         buffer += f"{service_name:{longest_name_len}} ${costs[-1]:8,.2f} {delta(costs):4.0f}% ${weekcost:12,.2f} {sparkline(costs):7}\n"
 
     other_costs = [0.0] * n_days
-    other_weekly_costs = 0
+    other_weekly_costs = 0.0
     for service_name, costs in most_expensive_yesterday[length:]:
         for i, cost in enumerate(costs):
-            other_costs[i] += cost
+            if i < len(other_costs):
+                other_costs[i] += cost
             other_weekly_costs += cost
 
     buffer += f"{'Other':{longest_name_len}} ${other_costs[-1]:8,.2f} {delta(other_costs):4.0f}% ${other_weekly_costs:12,.2f} {sparkline(other_costs):7} \n"
@@ -175,122 +217,121 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
     total_costs = [0.0] * n_days
     for day_number in range(n_days):
         for service_name, costs in most_expensive_yesterday:
-            try:
+            if day_number < len(costs):
                 total_costs[day_number] += costs[day_number]
-            except IndexError:
-                total_costs[day_number] += 0.0
 
-    total_weekly = 0
-    for key in cost_per_week_by_service.keys():
-        total_weekly += cost_per_week_by_service[key]
+    total_weekly = sum(cost_per_week_by_service.values())
 
     buffer += f"{'Total':{longest_name_len}} ${total_costs[-1]:8,.2f} {delta(total_costs):4.0f}% ${total_weekly:12,.2f} {sparkline(total_costs):7} \n"
 
     cost_per_day_by_service["total"] = total_costs[-1]
 
-    credits_expire_date = os.environ.get('CREDITS_EXPIRE_DATE')
-    if credits_expire_date:
-        credits_expire_date = datetime.datetime.strptime(credits_expire_date, "%m/%d/%Y")
+    # Get the date for yesterday's costs (the last day in our data)
+    # Include timezone information
+    utc_now = datetime.now(timezone.utc)
+    report_timestamp = utc_now.strftime('%Y-%m-%d %H:%M:%S %Z')
+    
+    # Add API response time info if available
+    api_info = f" (AWS API response: {api_response_time})" if api_response_time else ""
+    
+    credits_expire_date_str = os.environ.get('CREDITS_EXPIRE_DATE')
+    if credits_expire_date_str:
+        credits_expire_date = datetime.strptime(credits_expire_date_str, "%m/%d/%Y")
 
-        credits_remaining_as_of = os.environ.get('CREDITS_REMAINING_AS_OF')
-        credits_remaining_as_of = datetime.datetime.strptime(credits_remaining_as_of, "%m/%d/%Y")
+        credits_remaining_as_of_str = os.environ.get('CREDITS_REMAINING_AS_OF')
+        credits_remaining_as_of = datetime.strptime(credits_remaining_as_of_str, "%m/%d/%Y")
 
-        credits_remaining = float(os.environ.get('CREDITS_REMAINING'))
+        credits_remaining = float(os.environ.get('CREDITS_REMAINING', '0'))
 
         days_left_on_credits = (credits_expire_date - credits_remaining_as_of).days
-        allowed_credits_per_day = credits_remaining / days_left_on_credits
+        allowed_credits_per_day = credits_remaining / days_left_on_credits if days_left_on_credits > 0 else 0
 
-        relative_to_budget = (total_costs[-1] / allowed_credits_per_day) * 100.0
+        relative_to_budget = (total_costs[-1] / allowed_credits_per_day * 100.0) if allowed_credits_per_day > 0 else 0
 
         if relative_to_budget < 60:
             emoji = ":white_check_mark:"
         elif relative_to_budget > 110:
             emoji = ":rotating_light:"
         else:
-            emoji = ":warning:"
+            emoji = ":warning:" 
 
-        summary = (f"{emoji} Yesterday's {cost_aggregation} for {account_name} ${total_costs[-1]:,.2f} "
-                   f"is {relative_to_budget:.2f}% of credit budget "
-                   f"${allowed_credits_per_day:,.2f} for the day."
-                  )
+        summary = (
+            f"{emoji} {cost_aggregation} for {account_name} on {yesterday_date} (UTC) was ${total_costs[-1]:,.2f} "
+            f"({relative_to_budget:.2f}% of credit budget ${allowed_credits_per_day:,.2f} for the day) - "
+            f"Report generated at {report_timestamp}{api_info}"
+        )
     else:
-        summary = f"Yesterday's {cost_aggregation} for account {account_name} was ${total_costs[-1]:,.2f} (report from {start_period_date.strftime('%Y-%m-%d')} - {today.strftime('%Y-%m-%d')})"
+        summary = (
+            f"{cost_aggregation} for account {account_name} on {yesterday_date} (UTC) was ${total_costs[-1]:,.2f} "
+            f"(report covering {start_period_date.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')}) - "
+            f"Report generated at {report_timestamp}{api_info}"
+        )
 
     return summary, buffer, cost_per_day_by_service
 
 
-def publish_slack(hook_url, summary, buffer):
+def publish_slack(hook_url: str, summary: str, buffer: str) -> None:
+    """Publish cost report to Slack webhook."""
+    try:
+        resp = requests.post(
+            hook_url,
+            json={
+                "text": f"{summary}\n\n```\n{buffer}\n```",
+            },
+            timeout=30
+        )
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Slack webhook error: {e}")
 
-    resp = requests.post(
-        hook_url,
-        json={
-            "text": summary + "\n\n```\n" + buffer + "\n```",
-        }
-    )
 
-    if resp.status_code != 200:
-        print("HTTP %s: %s" % (resp.status_code, resp.text))
+def publish_teams(hook_url: str, summary: str, buffer: str) -> None:
+    """Publish cost report to Microsoft Teams webhook."""
+    try:
+        resp = requests.post(
+            hook_url,
+            json={
+                "text": f"{summary}\n\n```\n{buffer}\n```",
+            },
+            timeout=30
+        )
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Teams webhook error: {e}")
 
 
-def publish_teams(hook_url, summary, buffer):
-
-    resp = requests.post(
-        hook_url,
-        json={
-            "text": summary + "\n\n```\n" + buffer + "\n```",
-        }
-    )
-
-    if resp.status_code != 200:
-        print("HTTP %s: %s" % (resp.status_code, resp.text))
-
-def publish_google(hook_url, summary, buffer):
-
+def publish_google(hook_url: str, summary: str, buffer: str) -> None:
+    """Publish cost report to Google Chat webhook."""
     message = {
-        "text": summary + "\n\n```\n" + buffer + "\n```"
+        "text": f"{summary}\n\n```\n{buffer}\n```"
     }
     
-    resp = requests.post(hook_url, json=message)
-
-    if resp.status_code != 200:
-        print("HTTP %s: %s" % (resp.status_code, resp.text))
+    try:
+        resp = requests.post(hook_url, json=message, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Google Chat webhook error: {e}")
 
 if __name__ == "__main__":
-    # for running locally to test
-    import json
-    with open("example_boto3_result.json", "r") as f:
-        example_result = json.load(f)
-    with open("example_boto3_result2.json", "r") as f:
-        example_result2 = json.load(f)
-
-    summary, buffer, data = report_cost(group_type="TAG", group_by="map-migrated")
-    print(summary)
-    print(buffer)
-
-    summary, buffer, data = report_cost(group_type="TAG", group_by="map-migrated", cost_aggregation="AmortizedCost")
-    print(summary)
-    print(buffer)
-
-    # summary, buffer, data = report_cost(group_by="REGION")
-    # print(summary)
-    # print(buffer)
-
-    # summary, buffer, data = report_cost(group_by="USAGE_TYPE", length=20)
-    # print(summary)
-    # print(buffer)
-
-    summary, buffer, data = report_cost(group_by="SERVICE", length=20)
-    print(summary)
-    print(buffer)
-    summary, buffer, data = report_cost(group_by="SERVICE", length=5, cost_aggregation="UnblendedCost")
-    print(summary)
-    print(buffer)
-    summary, buffer, data = report_cost(group_by="SERVICE", length=5, cost_aggregation="AmortizedCost")
-    print(summary)
-    print(buffer)
-
-    # New Method with 2 example jsons
-    summary, buffer, cost_dict = report_cost(None, None, "UnblendedCost", example_result, yesterday_str="2021-08-23")
-    # assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "286.37", f'{cost_dict.get("total"):,.2f} != 286.37'
-    summary, buffer, cost_dict = report_cost(None, None, "UnblendedCost", example_result2, yesterday_str="2021-08-29")
-    # assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "21.45", f'{cost_dict.get("total"):,.2f} != 21.45'
+    """Test the cost reporting functionality with real AWS data."""
+    print("=== Testing with real AWS Cost Explorer API ===")
+    
+    # Test with SERVICE grouping
+    summary, buffer, cost_dict = report_cost(
+        group_by="SERVICE", 
+        length=10, 
+        cost_aggregation="UnblendedCost", 
+        n_days=7
+    )
+    print(f"UnblendedCost Summary: {summary}")
+    print(f"Buffer:\n{buffer}")
+    
+    print("\n=== Testing with AmortizedCost ===")
+    summary, buffer, cost_dict = report_cost(
+        group_by="SERVICE", 
+        length=10, 
+        cost_aggregation="AmortizedCost", 
+        n_days=7
+    )
+    print(f"AmortizedCost Summary: {summary}")
+    print(f"Buffer:\n{buffer}")
