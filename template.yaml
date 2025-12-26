@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AWS Billing to Slack - SAM Template
+
+Parameters:
+  SlackWebhookUrl:
+    Type: String
+    Default: ''
+    Description: Slack webhook URL for notifications
+  TeamsWebhookUrl:
+    Type: String
+    Default: ''
+    Description: Microsoft Teams webhook URL for notifications
+  GoogleWebhookUrl:
+    Type: String
+    Default: ''
+    Description: Google Chat webhook URL for notifications
+  GroupBy:
+    Type: String
+    Default: 'SERVICE'
+    Description: AWS Cost Explorer dimension to group by
+    AllowedValues:
+      - AZ
+      - INSTANCE_TYPE
+      - LINKED_ACCOUNT
+      - OPERATION
+      - PURCHASE_TYPE
+      - SERVICE
+      - USAGE_TYPE
+      - PLATFORM
+      - TENANCY
+      - RECORD_TYPE
+      - LEGAL_ENTITY_NAME
+      - INVOICING_ENTITY
+      - DEPLOYMENT_OPTION
+      - DATABASE_ENGINE
+      - CACHE_ENGINE
+      - INSTANCE_TYPE_FAMILY
+      - REGION
+      - BILLING_ENTITY
+      - RESERVATION_ID
+      - SAVINGS_PLANS_TYPE
+      - SAVINGS_PLAN_ARN
+      - OPERATING_SYSTEM
+  GroupLength:
+    Type: Number
+    Default: 10
+    Description: Number of top services to display
+  AwsAccountName:
+    Type: String
+    Default: ''
+    Description: Custom AWS account name for display
+  CreditsExpireDate:
+    Type: String
+    Default: ''
+    Description: AWS credits expiration date (mm/dd/yyyy)
+  CreditsRemainingAsOf:
+    Type: String
+    Default: ''
+    Description: Date when credits remaining was calculated (mm/dd/yyyy)
+  CreditsRemaining:
+    Type: String
+    Default: ''
+    Description: Amount of AWS credits remaining
+  CostAggregation:
+    Type: String
+    Default: 'UnblendedCost'
+    Description: Cost aggregation method
+    AllowedValues:
+      - AmortizedCost
+      - BlendedCost
+      - NetAmortizedCost
+      - NetUnblendedCost
+      - NormalizedUsageAmount
+      - UnblendedCost
+      - UsageQuantity
+  Days:
+    Type: Number
+    Default: 7
+    Description: Number of days to include in the report
+
+Globals:
+  Function:
+    Timeout: 10
+    MemorySize: 128
+    Runtime: python3.12
+
+Resources:
+  ReportCostFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handler.lambda_handler
+      Description: Send account daily billing data to Slack/Teams/Google Chat
+      Environment:
+        Variables:
+          GROUP_TYPE: DIMENSION
+          GROUP_BY: !Ref GroupBy
+          LENGTH: !Ref GroupLength
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+          TEAMS_WEBHOOK_URL: !Ref TeamsWebhookUrl
+          GOOGLE_WEBHOOK_URL: !Ref GoogleWebhookUrl
+          AWS_ACCOUNT_NAME: !Ref AwsAccountName
+          CREDITS_EXPIRE_DATE: !Ref CreditsExpireDate
+          CREDITS_REMAINING_AS_OF: !Ref CreditsRemainingAsOf
+          CREDITS_REMAINING: !Ref CreditsRemaining
+          COST_AGGREGATION: !Ref CostAggregation
+          DAYS: !Ref Days
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 15 * * ? *)
+            Description: Run daily at 15:00 UTC / 10am CDT
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ce:GetCostAndUsage
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - iam:ListAccountAliases
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - sts:GetCallerIdentity
+              Resource: '*'
+
+Outputs:
+  ReportCostFunction:
+    Description: AWS Lambda Function ARN
+    Value: !GetAtt ReportCostFunction.Arn
+  ReportCostFunctionIamRole:
+    Description: Implicit IAM Role created for the function
+    Value: !GetAtt ReportCostFunctionRole.Arn
