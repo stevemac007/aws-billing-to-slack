@@ -22,10 +22,10 @@ Choose the method that best fits your workflow and tooling preferences.
 
 ### Prerequisites
 
-1. Install [`serverless`](https://serverless.com/), which configures the AWS Lambda function that runs daily.
+1. Install [`serverless`](https://serverless.com/) v3.x (v4+ requires a license), which configures the AWS Lambda function that runs daily.
 
     ```bash
-    npm install -g serverless
+    npm install -g serverless@^3.0.0
     ```
 
 2. Create an [incoming webhook](https://www.slack.com/apps/new/A0F7XDUAZ) that will post to the channel of your choice on your Slack workspace. Grab the URL for use in the next step.
@@ -144,11 +144,12 @@ sam deploy --parameter-overrides \
 | Feature | Serverless Framework | AWS SAM |
 |---------|---------------------|---------|
 | **Configuration** | `serverless.yml` | `template.yaml` |
-| **Dependencies** | Node.js + Serverless CLI | AWS SAM CLI |
+| **Dependencies** | Node.js + Serverless CLI v3.x | AWS SAM CLI |
 | **Parameter Handling** | Command-line `--param` | CloudFormation parameters |
 | **Local Testing** | `serverless invoke local` | `sam local invoke` |
 | **AWS Integration** | Third-party framework | Native AWS tooling |
 | **Template Format** | Serverless-specific YAML | CloudFormation + SAM |
+| **License** | Free for v3.x, paid for v4+ | Free |
 
 Both methods deploy the same Lambda function with identical functionality. Choose based on your team's preferences and existing toolchain.
 

@@ -1,4 +1,5 @@
 service: aws-billing-to-slack
+frameworkVersion: ^3.0.0
 
 plugins:
   - serverless-python-requirements

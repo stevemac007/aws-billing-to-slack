@@ -61,7 +61,7 @@ sam-delete:
 
 # Utility targets
 install-serverless:
-	npm install -g serverless
+	npm install -g serverless@^3.0.0
 	serverless plugin install -n serverless-python-requirements
 
 install-sam:
