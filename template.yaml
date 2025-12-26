@@ -121,6 +121,10 @@ Resources:
               Action:
                 - iam:ListAccountAliases
               Resource: '*'
+            - Effect: Allow
+              Action:
+                - sts:GetCallerIdentity
+              Resource: '*'
 
 Outputs:
   ReportCostFunction:
