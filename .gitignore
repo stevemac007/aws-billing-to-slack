@@ -20,3 +20,8 @@ var/
 
 # Serverless directories
 .serverless
+
+# SAM directories
+.aws-sam/
+samconfig.toml.bak
+samconfig.toml

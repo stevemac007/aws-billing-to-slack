@@ -256,15 +256,14 @@ def report_cost(
             emoji = ":warning:" 
 
         summary = (
-            f"{emoji} {cost_aggregation} for {account_name} on {yesterday_date} (UTC) was ${total_costs[-1]:,.2f} "
-            f"({relative_to_budget:.2f}% of credit budget ${allowed_credits_per_day:,.2f} for the day) - "
+            f"{emoji} {cost_aggregation} for {account_name} on {yesterday_date} (UTC) was ${total_costs[-1]:,.2f}\n"
+            f"({relative_to_budget:.2f}% of credit budget ${allowed_credits_per_day:,.2f} for the day)\n"
             f"Report generated at {report_timestamp}{api_info}"
         )
     else:
         summary = (
-            f"{cost_aggregation} for account {account_name} on {yesterday_date} (UTC) was ${total_costs[-1]:,.2f} "
-            f"(report covering {start_period_date.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')}) - "
-            f"Report generated at {report_timestamp}{api_info}"
+            f"{cost_aggregation} for account {account_name} on {yesterday_date} (UTC) was ${total_costs[-1]:,.2f}\n"
+            f"Report covering {start_period_date.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')}\n"
         )
 
     return summary, buffer, cost_per_day_by_service
@@ -273,7 +272,7 @@ def report_cost(
 def publish_slack(hook_url: str, summary: str, buffer: str) -> None:
     """Publish cost report to Slack webhook."""
     try:
-        resp = requests.post(
+        resp = requests.post(   
             hook_url,
             json={
                 "text": f"{summary}\n\n```\n{buffer}\n```",
